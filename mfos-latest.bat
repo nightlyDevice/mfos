@@ -18,6 +18,16 @@ set "userdata=userdata"
 set "usrsysdata=mfosdata"
 set "disk0label=MicroflashOS"
 
+::Update cleanup
+if "%1"=="UPDATE" if exist mfos-latest.old (
+    del installer.bat mfos-latest.old
+    echo.
+    echo Update completed!
+    echo You are now on %mfosver%
+    echo.
+    pause
+)
+
 :: Boot process stage 0 - Bootloader
 
 :bootstagezero
@@ -395,7 +405,7 @@ set "command="
 
 :: Command whitelist
 
-set "cmdlist=about help clock clear reboot shutdown mkdir rename delete list cd home homewipe mfpkg mountsys modules toggles nuke dumper winflash mountvirt getargs getvars"
+set "cmdlist=about help clock clear reboot shutdown mkdir rename delete list cd home homewipe mfpkg mountsys modules toggles nuke dumper winflash mountvirt getargs getvars update"
 
 :: receive input from the user:
 
@@ -442,6 +452,7 @@ call :cmdok
 echo Utilities:
 echo.
 echo about: Show some system info
+echo update: Automatically updates to the latest version
 echo clock: Print current date and time
 echo clear: Clear console output
 echo.
@@ -501,6 +512,115 @@ if exist "%disk0p1%/mfpkg.mcm" (
     )
 )
 goto execdone
+
+
+:update
+setlocal EnableDelayedExpansion
+
+:: updater links
+set batLink="https://raw.githubusercontent.com/knbn1/mfos/refs/heads/main/mfos-latest.bat"
+set metaLink="https://raw.githubusercontent.com/knbn1/mfos/refs/heads/main/mfos-latest.meta"
+
+set "latestVersion="
+set "return="
+
+call :curl_check return
+if "%return%"=="nope" (
+    echo curl not found or inaccessible.
+    set /p conf="Install curl via winget?(y/[n])"
+    if not "%conf%"=="y" (goto :eof)
+    winget install -e --id curl.curl --silent --accept-source-agreements --accept-package-agreements || goto :eof
+)
+
+echo.
+echo Checking for latest updates...
+curl -sSf -o "mfos-latest.meta" %metaLink% 2> curl.ERR
+
+call :file_empty "curl.ERR" return
+if "%return%"=="nope" (
+    type curl.ERR >> %logfile%
+    echo Version check failed. Below are the details of the error:
+    type curl.ERR
+    
+    del curl.ERR & goto :eof
+)
+
+set /a metaLineCount=0
+for /f "delims=" %%i in (mfos-latest.meta) do (
+    set /a metaLineCount+=1
+    :: can expand depending on .meta file
+    if !metaLineCount! == 1 (
+        set "latestVersion=%%i"
+    )
+) & del mfos-latest.meta
+
+call :date_GEQ %mfosver% %latestVersion% yessir return
+if "%return%"=="yessir" (
+    echo No newer versions found -- You are up-to-date!
+    goto :eof
+)
+
+echo Latest Version Found: %latestVersion%
+set /p conf="Install update?([y]/n):"
+if "%conf%"=="n" (goto :eof)
+
+echo Downloading latest version...
+curl -sSf -o TEMP_mfos-latest.bat %batLink% 2> curl.ERR
+
+call :file_empty "curl.ERR" return
+if "%return%"=="nope" (
+    type curl.ERR >> %logfile%
+    echo Update download failed. Below are the details of the error:
+    type curl.ERR
+
+    del curl.ERR & goto :eof
+) & del curl.ERR
+
+move /y TEMP_mfos-latest.bat "%~dp0"
+cd /d "%~dp0"
+
+::Hard-coded installer - Separate in the future
+echo @echo off > installer.bat
+echo echo. >> installer.bat
+echo echo Installing update... >> installer.bat
+echo ren mfos-latest.bat mfos-latest.old >> installer.bat
+echo ren TEMP_mfos-latest.bat mfos-latest.bat >> installer.bat
+echo mfos-latest.bat UPDATE >> installer.bat
+
+installer.bat & goto :eof
+::bye bye old version
+
+
+:curl_check
+:: check for curl so we can do online stuffs
+:: %1=return var(bool)
+    echo [updater] INFO: Checking for curl... >> %logfile%
+    curl --version >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [updater] ERROR: curl not found. >> %logfile%
+        set "%1=nope"
+        goto :eof
+    )
+    echo [updater] INFO: curl is already installed. >> %logfile%
+    set "%1=yessir"
+    goto :eof
+
+:file_empty
+:: %1=filenameset(QUOTED) | %2=return(bool)
+    for /f "usebackq" %%i in (%1) do (
+        set "%2=nope" & goto :eof
+    )
+    set "%2=yessir" & goto :eof
+
+:date_GEQ
+:: Date format: YYYY.MM.DD (padded zeros)
+:: %1=date 1, %2=date 2, %3=use equal?(bool) | %4=return(bool)
+:: Swap dates to flip the inequality
+    if "%1" GTR "%2" (set "%4=yessir" & goto :eof)
+    if "%3"=="yessir" if "%1"=="%2" (set "%4=yessir" & goto :eof)
+    set "%4=nope"
+    goto :eof
+
 
 :: About me
 
